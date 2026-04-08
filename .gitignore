@@ -1,0 +1,16 @@
+# Credenciais e variáveis de ambiente
+.env
+
+# Banco de dados SQLite
+*.db
+
+# Ambiente virtual Python
+.venv/
+
+# Bytecode Python
+__pycache__/
+*.pyc
+*.pyo
+
+# get-pip.py (não faz parte do projeto)
+get-pip.py

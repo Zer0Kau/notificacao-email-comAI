@@ -1,0 +1,11 @@
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sse-starlette==2.1.0
+imapclient==3.0.1
+python-dotenv==1.0.1
+aiosqlite==0.20.0
+sqlalchemy[asyncio]==2.0.35
+pydantic==2.9.2
+pydantic-settings==2.5.2
+beautifulsoup4==4.12.3
+edge-tts==6.1.12

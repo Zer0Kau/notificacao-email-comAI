@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Central de Notificações</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&display=swap');
+
+        * { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+
+        /* ===== Scrollbar estilo Windows 11 ===== */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+
+        /* ===== Backdrop Mica (Windows 11) ===== */
+        .mica-bg {
+            background: linear-gradient(135deg, rgba(32,32,32,0.85) 0%, rgba(44,44,44,0.80) 100%);
+            backdrop-filter: blur(40px) saturate(150%);
+            -webkit-backdrop-filter: blur(40px) saturate(150%);
+        }
+
+        /* ===== Toast Animation ===== */
+        @keyframes toast-in {
+            0%   { opacity: 0; transform: translateX(100%) scale(0.95); }
+            100% { opacity: 1; transform: translateX(0) scale(1); }
+        }
+        @keyframes toast-out {
+            0%   { opacity: 1; transform: translateX(0) scale(1); }
+            100% { opacity: 0; transform: translateX(100%) scale(0.95); }
+        }
+        .toast-enter { animation: toast-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .toast-exit  { animation: toast-out 0.3s cubic-bezier(0.5, 0, 0.75, 0) forwards; }
+
+        /* ===== Notification card slide-in ===== */
+        @keyframes slide-down {
+            0%   { opacity: 0; transform: translateY(-12px); }
+            100% { opacity: 1; transform: translateY(0); }
+        }
+        .notif-enter { animation: slide-down 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+        /* ===== Acrylic card ===== */
+        .acrylic-card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            transition: background 0.15s, border-color 0.15s;
+        }
+        .acrylic-card:hover {
+            background: rgba(255,255,255,0.08);
+            border-color: rgba(255,255,255,0.14);
+        }
+
+        /* ===== Badge pulse ===== */
+        @keyframes badge-pulse {
+            0%, 100% { transform: scale(1); }
+            50%      { transform: scale(1.2); }
+        }
+        .badge-pulse { animation: badge-pulse 0.6s ease-in-out; }
+
+        /* ===== Connection indicator ===== */
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            display: inline-block;
+            transition: background 0.3s;
+        }
+        .status-connected    { background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,0.5); }
+        .status-disconnected { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,0.5); }
+        .status-connecting   { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,0.5); }
+
+        /* ===== Bottom Sheet (Histórico) ===== */
+        .bottom-sheet {
+            transform: translateY(100%);
+            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+        .bottom-sheet.open {
+            transform: translateY(0);
+        }
+        .sheet-backdrop {
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
+        }
+        .sheet-backdrop.open {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* Scrollbar thin/dark dentro do histórico */
+        .history-scroll::-webkit-scrollbar { width: 4px; }
+        .history-scroll::-webkit-scrollbar-track { background: transparent; }
+        .history-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
+        .history-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+
+        /* Borda lateral colorida por regra */
+        .rule-border-zabbix       { border-left: 3px solid #f87171; }
+        .rule-border-monitoramento{ border-left: 3px solid #fbbf24; }
+        .rule-border-deploy       { border-left: 3px solid #34d399; }
+        .rule-border-teste        { border-left: 3px solid #60a5fa; }
+        .rule-border-default      { border-left: 3px solid rgba(255,255,255,0.15); }
+
+        /* Ponto pulsante no botão flutuante */
+        @keyframes live-pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%      { opacity: 0.5; transform: scale(1.6); }
+        }
+        .live-dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: #34d399;
+            animation: live-pulse 2s ease-in-out infinite;
+        }
+
+    </style>
+</head>
+<body class="bg-neutral-900 text-white min-h-screen flex items-center justify-center">
+
+    <!-- ===== CENTRAL DE NOTIFICAÇÕES ===== -->
+    <div class="w-full max-w-md mx-auto h-screen flex flex-col">
+
+        <!-- Header -->
+        <div class="mica-bg border-b border-white/10 px-5 py-4 flex items-center justify-between sticky top-0 z-30">
+            <div class="flex items-center gap-3">
+                <div>
+                    <h1 class="text-base font-semibold tracking-tight">Notificações</h1>
+                    <div class="flex items-center gap-2 mt-0.5">
+                        <span id="statusDot" class="status-dot status-connecting"></span>
+                        <span id="statusText" class="text-[11px] text-neutral-400">Conectando...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <span id="badgeCount" class="hidden bg-blue-500 text-[11px] font-bold rounded-full w-5 h-5 flex items-center justify-center">0</span>
+                <button
+                    onclick="sendTestNotification()"
+                    class="text-xs text-neutral-400 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-md transition"
+                    title="Enviar notificação de teste"
+                >
+                    Testar
+                </button>
+                <button
+                    onclick="clearAll()"
+                    class="text-xs text-neutral-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-md transition"
+                >
+                    Limpar tudo
+                </button>
+            </div>
+        </div>
+
+        <!-- Lista de Notificações -->
+        <div id="notificationList" class="flex-1 overflow-y-auto px-3 py-3 space-y-2">
+            <!-- Placeholder -->
+            <div id="emptyState" class="flex flex-col items-center justify-center h-full text-neutral-500">
+                <svg class="w-16 h-16 mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
+                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                </svg>
+                <p class="text-sm">Nenhuma notificação</p>
+                <p class="text-xs mt-1 text-neutral-600">As notificações aparecerão aqui em tempo real</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== BOTÃO FLUTUANTE — HISTÓRICO ===== -->
+    <button
+        id="historyBtn"
+        onclick="toggleHistory()"
+        class="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-5 py-2.5 rounded-full
+               bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20
+               backdrop-blur-xl shadow-lg shadow-black/30 transition-all duration-200 group"
+    >
+        <svg class="w-4 h-4 text-neutral-400 group-hover:text-white transition" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <span class="text-xs text-neutral-400 group-hover:text-white transition">Histórico</span>
+        <span class="live-dot" id="liveDot"></span>
+    </button>
+
+    <!-- ===== BACKDROP do Bottom Sheet ===== -->
+    <div id="sheetBackdrop" class="sheet-backdrop fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onclick="toggleHistory()"></div>
+
+    <!-- ===== BOTTOM SHEET — HISTÓRICO ===== -->
+    <div id="historySheet" class="bottom-sheet fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
+        <div class="w-full max-w-lg pointer-events-auto rounded-t-2xl shadow-2xl shadow-black/60 border border-white/10 border-b-0 overflow-hidden"
+             style="height: 60vh; background: linear-gradient(180deg, rgba(30,30,30,0.97) 0%, rgba(24,24,24,0.98) 100%);
+                    backdrop-filter: blur(60px) saturate(180%); -webkit-backdrop-filter: blur(60px) saturate(180%);">
+
+            <!-- Handle bar -->
+            <div class="flex justify-center pt-3 pb-1">
+                <div class="w-10 h-1 rounded-full bg-white/15"></div>
+            </div>
+
+            <!-- Header -->
+            <div class="flex items-center justify-between px-5 py-2.5 border-b border-white/8">
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    <h2 class="text-sm font-semibold text-neutral-200">Histórico de Notificações</h2>
+                    <span id="historyCount" class="text-[10px] text-neutral-500"></span>
+                </div>
+                <button onclick="toggleHistory()" class="text-neutral-500 hover:text-white hover:bg-white/10 rounded-md p-1.5 transition">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Lista scrollável -->
+            <div id="historyList" class="history-scroll overflow-y-auto px-4 py-3 space-y-2" style="height: calc(60vh - 72px);">
+                <p class="text-xs text-neutral-500 text-center py-10">Carregando...</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== TOAST CONTAINER (canto inferior direito) ===== -->
+    <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+    </div>
+
+    <script src="/static/script.js?v=9"></script>
+</body>
+</html>
