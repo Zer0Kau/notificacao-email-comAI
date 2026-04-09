@@ -5,19 +5,20 @@ import io
 import json
 import logging
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 import edge_tts
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic_settings import BaseSettings
 from sse_starlette.sse import EventSourceResponse
 from sqlalchemy import select
 
 from .database import async_session, init_db
-from .mail_worker import imap_idle_worker
+from .mail_worker import imap_idle_worker, warmup_ollama
 from .models import Notification
 from .schemas import NotificationOut
 
@@ -48,6 +49,8 @@ class Settings(BaseSettings):
     IMAP_RECONNECT_DELAY: int = 5
     IMAP_IDLE_TIMEOUT: int = 300
     ZABBIX_SENDER: str = ""
+    SISTEMA_PROCESSOS_SENDER: str = ""
+    SUAP_SENDER: str = ""
 
     model_config = {"env_file": ".env", "extra": "ignore"}
 
@@ -67,6 +70,15 @@ sse_clients: set[asyncio.Queue] = set()
 
 # Evento de shutdown — sinaliza SSE generators para encerrar
 shutdown_event: asyncio.Event = asyncio.Event()
+
+# Timestamp do último pulso do IMAP worker (health check)
+last_imap_pulse: datetime = datetime.utcnow()
+
+
+def _update_imap_pulse() -> None:
+    """Atualiza o timestamp do último pulso do IMAP worker."""
+    global last_imap_pulse
+    last_imap_pulse = datetime.utcnow()
 
 
 # ============================================
@@ -92,6 +104,9 @@ async def lifespan(app: FastAPI):
 
     fanout_task = asyncio.create_task(fanout())
 
+    # Pré-carrega modelo Ollama na memória (evita cold start de ~8s na 1ª notificação)
+    asyncio.create_task(warmup_ollama(), name="ollama-warmup")
+
     # Inicia um worker IMAP IDLE para cada pasta configurada
     folders = settings.imap_folder_list
     worker_tasks: list[asyncio.Task] = []
@@ -107,6 +122,9 @@ async def lifespan(app: FastAPI):
                 idle_timeout=settings.IMAP_IDLE_TIMEOUT,
                 reconnect_delay=settings.IMAP_RECONNECT_DELAY,
                 zabbix_sender=settings.ZABBIX_SENDER,
+                sistema_processos_sender=settings.SISTEMA_PROCESSOS_SENDER,
+                suap_sender=settings.SUAP_SENDER,
+                pulse_callback=_update_imap_pulse,
             )
         )
         worker_tasks.append(task)
@@ -206,9 +224,11 @@ async def sse_stream(request: Request):
                     data = await asyncio.wait_for(client_queue.get(), timeout=5)
                     if data is None:
                         break  # Sinal de shutdown
+                    event_type = data.get("_sse_event", "notification")
+                    payload = {k: v for k, v in data.items() if k != "_sse_event"}
                     yield {
-                        "event": "notification",
-                        "data": json.dumps(data, ensure_ascii=False),
+                        "event": event_type,
+                        "data": json.dumps(payload, ensure_ascii=False),
                     }
                 except asyncio.TimeoutError:
                     yield {"event": "ping", "data": ""}
@@ -218,6 +238,33 @@ async def sse_stream(request: Request):
             sse_clients.discard(client_queue)
 
     return EventSourceResponse(event_generator())
+
+
+@app.get("/api/health")
+async def health_check():
+    """Health check do IMAP Worker — verifica o último pulso.
+    
+    Retorna:
+    - status="healthy" e code 200 se o último pulso foi há menos de 10 minutos
+    - status="unhealthy" e code 503 caso contrário (worker pode estar travado)
+    """
+    global last_imap_pulse
+    now = datetime.utcnow()
+    elapsed = (now - last_imap_pulse).total_seconds()
+    health_threshold = 10 * 60  # 10 minutos em segundos
+    
+    is_healthy = elapsed < health_threshold
+    status_code = 200 if is_healthy else 503
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "healthy" if is_healthy else "unhealthy",
+            "last_imap_pulse": last_imap_pulse.isoformat(),
+            "elapsed_seconds": int(elapsed),
+            "threshold_seconds": health_threshold,
+        }
+    )
 
 
 EDGE_TTS_VOICE = "pt-BR-FranciscaNeural"
@@ -270,5 +317,6 @@ async def create_test_notification():
         await session.refresh(db_notif)
 
     out = NotificationOut.model_validate(db_notif).model_dump(mode="json")
+    out["_sse_event"] = "notification"
     await notification_queue.put(out)
     return out

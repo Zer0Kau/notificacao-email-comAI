@@ -8,4 +8,4 @@ sqlalchemy[asyncio]==2.0.35
 pydantic==2.9.2
 pydantic-settings==2.5.2
 beautifulsoup4==4.12.3
-edge-tts==6.1.12
+edge-tts==7.2.8

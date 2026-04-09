@@ -12,5 +12,10 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Node.js (PM2 / ferramentas locais)
+node_modules/
+package-lock.json
+
 # get-pip.py (não faz parte do projeto)
 get-pip.py
+

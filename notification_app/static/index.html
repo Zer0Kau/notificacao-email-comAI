@@ -96,11 +96,13 @@
         .history-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
 
         /* Borda lateral colorida por regra */
-        .rule-border-zabbix       { border-left: 3px solid #f87171; }
-        .rule-border-monitoramento{ border-left: 3px solid #fbbf24; }
-        .rule-border-deploy       { border-left: 3px solid #34d399; }
-        .rule-border-teste        { border-left: 3px solid #60a5fa; }
-        .rule-border-default      { border-left: 3px solid rgba(255,255,255,0.15); }
+        .rule-border-zabbix            { border-left: 3px solid #f87171; }
+        .rule-border-monitoramento     { border-left: 3px solid #60a5fa; }
+        .rule-border-sistema-processos { border-left: 3px solid #34d399; }
+        .rule-border-suap              { border-left: 3px solid #fbbf24; }
+        .rule-border-deploy            { border-left: 3px solid #34d399; }
+        .rule-border-teste             { border-left: 3px solid #60a5fa; }
+        .rule-border-default           { border-left: 3px solid rgba(255,255,255,0.15); }
 
         /* Ponto pulsante no botão flutuante */
         @keyframes live-pulse {
@@ -112,6 +114,10 @@
             background: #34d399;
             animation: live-pulse 2s ease-in-out infinite;
         }
+
+        /* Transição suave do resumo de IA */
+        [data-msg] { transition: color 0.6s ease; }
+        .ai-summary { color: #c4b5fd; } /* violet-300 */
 
     </style>
 </head>
@@ -219,6 +225,6 @@
     <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
     </div>
 
-    <script src="/static/script.js?v=9"></script>
+    <script src="/static/script.js?v=15"></script>
 </body>
 </html>

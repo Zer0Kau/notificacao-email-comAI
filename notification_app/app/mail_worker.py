@@ -7,7 +7,9 @@ import re
 from datetime import datetime
 from email.header import decode_header
 from email.utils import parseaddr
+from typing import Callable
 
+import aiohttp
 from bs4 import BeautifulSoup
 from imapclient import IMAPClient
 
@@ -17,13 +19,48 @@ from .schemas import NotificationCreate
 
 logger = logging.getLogger(__name__)
 
+# Ollama — configurações de IA local
+_OLLAMA_URL = "http://localhost:11434/api/generate"
+_OLLAMA_MODEL = "nti-bot"
+_OLLAMA_TIMEOUT = 60  # segundos
+
+# Sessão HTTP persistente — evita TCP/TLS handshake a cada chamada Ollama
+_http_session: aiohttp.ClientSession | None = None
+
+
+def _get_http_session() -> aiohttp.ClientSession:
+    """Retorna (ou cria) a sessão aiohttp persistente."""
+    global _http_session
+    if _http_session is None or _http_session.closed:
+        _http_session = aiohttp.ClientSession()
+    return _http_session
+
+
+async def warmup_ollama() -> None:
+    """Envia prompt vazio para forçar o carregamento do modelo na memória."""
+    try:
+        session = _get_http_session()
+        async with session.post(
+            _OLLAMA_URL,
+            json={"model": _OLLAMA_MODEL, "prompt": "", "stream": False,
+                  "keep_alive": -1, "options": {"num_predict": 1}},
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            logger.info("[IA] Warm-up Ollama: status %d — modelo pronto.", resp.status)
+    except Exception as exc:
+        logger.warning("[IA] Warm-up Ollama falhou (será tentado na 1ª notificação): %s", exc)
+
 # ============================================
 # Regras de filtragem de e-mails
 # Cada regra: { "name": str, "sender": regex|None, "subject": regex|None }
 # Se sender E subject estiverem definidos, ambos precisam casar.
 # Se apenas um estiver definido, apenas ele é verificado.
 # ============================================
-def _build_filter_rules(zabbix_sender: str = "") -> list[dict]:
+def _build_filter_rules(
+    zabbix_sender: str = "",
+    sistema_processos_sender: str = "",
+    suap_sender: str = "",
+) -> list[dict]:
     """Constrói as regras de filtro. Usa re.escape() no e-mail para tratar pontos."""
     rules: list[dict] = []
     if zabbix_sender:
@@ -31,6 +68,18 @@ def _build_filter_rules(zabbix_sender: str = "") -> list[dict]:
             "name": "Zabbix NTI CJ",
             "sender": re.compile(re.escape(zabbix_sender), re.IGNORECASE),
             "subject": None,
+        })
+    if sistema_processos_sender:
+        rules.append({
+            "name": "Sistema Processos",
+            "sender": re.compile(re.escape(sistema_processos_sender), re.IGNORECASE),
+            "subject": None,
+        })
+    if suap_sender:
+        rules.append({
+            "name": "SUAP",
+            "sender": re.compile(re.escape(suap_sender), re.IGNORECASE),
+            "subject": re.compile(r"novo\s+chamado", re.IGNORECASE),
         })
     rules.append({
         "name": "Monitoramento",
@@ -56,10 +105,13 @@ def _decode_mime_header(raw: str | None) -> str:
 def _strip_html(html: str) -> str:
     """Converte HTML para texto plano usando BeautifulSoup."""
     soup = BeautifulSoup(html, "html.parser")
+    # Remove blocos que não contribuem com conteúdo legível
+    for tag in soup(["script", "style", "head", "meta", "link", "noscript"]):
+        tag.decompose()
     return soup.get_text(separator=" ")
 
 
-def _extract_body_preview(msg: email.message.Message, max_len: int = 300) -> str:
+def _extract_body_preview(msg: email.message.Message) -> str:
     """Extrai um preview em texto plano do corpo do e-mail."""
     text_body = ""
     html_body = ""
@@ -88,9 +140,14 @@ def _extract_body_preview(msg: email.message.Message, max_len: int = 300) -> str
 
     # Prefere texto plano; se não tiver, converte HTML
     body = text_body or _strip_html(html_body)
-    # Limpa espaços múltiplos e quebras de linha excessivas
+    # Normaliza para linha única:
+    # 1. Substitui espaços não-quebráveis (\xa0) e tabs por espaço normal
+    body = body.replace("\xa0", " ").replace("\t", " ")
+    # 2. Remove caracteres de controle (exceto espaço)
+    body = re.sub(r"[\x00-\x1f\x7f]", " ", body)
+    # 3. Colapsa qualquer sequência de espaços/newlines em um único espaço
     body = re.sub(r"\s+", " ", body).strip()
-    return body[:max_len]
+    return body[:600]
 
 
 def _match_rules(sender: str, subject: str, rules: list[dict]) -> str | None:
@@ -118,6 +175,63 @@ async def _save_notification(notif: NotificationCreate) -> Notification:
         await session.commit()
         await session.refresh(db_notif)
         return db_notif
+
+
+async def _process_ai_features(
+    notif_id: int,
+    title: str,
+    message: str,
+    queue: asyncio.Queue,
+) -> None:
+    """Gera resumo via Ollama e envia evento 'update' pelo SSE.
+
+    Falhas são silenciosas — a notificação original não é afetada.
+    """
+    prompt = (
+        "Resuma o seguinte alerta de monitoramento em no máximo 2 frases "
+        "diretas e objetivas, sem introduções:\n\n"
+        f"Assunto: {title}\n"
+        f"Mensagem: {message}"
+    )
+    try:
+        session = _get_http_session()
+        async with session.post(
+            _OLLAMA_URL,
+            json={
+                "model": _OLLAMA_MODEL,
+                "prompt": prompt,
+                "stream": False,
+                "keep_alive": -1,          # nunca descarrega o modelo da memória
+                "options": {"num_predict": 80},  # ~2 frases; geração ~5× mais rápida
+            },
+            timeout=aiohttp.ClientTimeout(total=_OLLAMA_TIMEOUT),
+        ) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "[IA] Ollama retornou status %d para notif %d", resp.status, notif_id
+                    )
+                    return
+                body = await resp.json(content_type=None)
+
+        summary = (body.get("response") or "").strip()
+        if not summary:
+            logger.warning("[IA] Resumo vazio para notif %d", notif_id)
+            return
+
+        # Limita ao máximo aceito pelo TTS
+        summary = summary[:500]
+        logger.info("[IA] Resumo gerado para notif %d: %s", notif_id, summary[:80])
+
+        await queue.put({
+            "_sse_event": "update",
+            "id": notif_id,
+            "summary": summary,
+        })
+
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("[IA] Falha ao processar notif %d: %s", notif_id, exc)
 
 
 def _process_email_message(raw_msg: bytes, folder: str, rules: list[dict]) -> NotificationCreate | None:
@@ -159,11 +273,14 @@ async def imap_idle_worker(
     idle_timeout: int = 300,
     reconnect_delay: int = 5,
     zabbix_sender: str = "",
+    sistema_processos_sender: str = "",
+    suap_sender: str = "",
+    pulse_callback: Callable[[], None] | None = None,
 ) -> None:
     """Loop principal do worker IMAP IDLE com reconexão automática."""
     from .schemas import NotificationOut
 
-    filter_rules = _build_filter_rules(zabbix_sender)
+    filter_rules = _build_filter_rules(zabbix_sender, sistema_processos_sender, suap_sender)
     logger.info("[%s] Regras de filtro ativas: %s", folder, [r['name'] for r in filter_rules])
 
     first_connect = True
@@ -191,10 +308,10 @@ async def imap_idle_worker(
             select_info = await asyncio.to_thread(client.select_folder, folder)
             msg_count = select_info.get(b"EXISTS", "?")
 
-            # Captura UIDs UNSEEN já existentes para ignorá-los
-            existing_uids = set(await asyncio.to_thread(client.search, ["UNSEEN"]))
+            # Captura sequências UNSEEN já existentes para ignorá-los
+            existing_seqs = set(await asyncio.to_thread(client.search, ["UNSEEN"]))
             logger.info("[%s] Pasta aberta (%s mensagens, %d UNSEEN pré-existentes ignorados). IDLE ativo (timeout=%ds).",
-                        folder, msg_count, len(existing_uids), idle_timeout)
+                        folder, msg_count, len(existing_seqs), idle_timeout)
 
             while True:
                 await asyncio.to_thread(client.idle)
@@ -202,7 +319,7 @@ async def imap_idle_worker(
                 # Checa IDLE em intervalos curtos para permitir cancelamento rápido
                 responses = []
                 elapsed = 0
-                check_interval = 5  # segundos por check
+                check_interval = 2  # segundos por check
                 while elapsed < idle_timeout:
                     try:
                         chunk = await asyncio.to_thread(
@@ -223,6 +340,10 @@ async def imap_idle_worker(
                     logger.warning("[%s] idle_done falhou: %s", folder, exc)
                     break
 
+                # Atualiza o pulso do health check (sinal de vida do worker)
+                if pulse_callback:
+                    pulse_callback()
+
                 if chunk is None:
                     break  # Erro no idle_check, reconecta
 
@@ -230,20 +351,23 @@ async def imap_idle_worker(
                 if not responses:
                     continue
 
-                # Qualquer resposta IDLE = possível novo e-mail, buscar UNSEEN
+                # Qualquer resposta IDLE = possível novo e-mail
                 logger.info("[%s] Atividade IDLE detectada: %s", folder, responses)
 
                 all_unseen = await asyncio.to_thread(client.search, ["UNSEEN"])
-                # Filtra apenas UIDs novos (que não existiam ao iniciar)
-                uids = [uid for uid in all_unseen if uid not in existing_uids]
-                if not uids:
+                seqs = [s for s in all_unseen if s not in existing_seqs]
+
+                if not seqs:
                     logger.info("[%s] Nenhum e-mail novo após evento IDLE.", folder)
                     continue
 
-                logger.info("[%s] %d e-mail(s) novo(s) detectado(s).", folder, len(uids))
+                # Registra para não reprocessar em ciclos futuros
+                existing_seqs.update(seqs)
+
+                logger.info("[%s] %d e-mail(s) novo(s) detectado(s).", folder, len(seqs))
 
                 raw_messages = await asyncio.to_thread(
-                    client.fetch, uids, ["RFC822"]
+                    client.fetch, seqs, ["RFC822"]
                 )
 
                 for uid, data in raw_messages.items():
@@ -260,7 +384,17 @@ async def imap_idle_worker(
                                 folder, notif_data.rule_matched, notif_data.title)
 
                     out = NotificationOut.model_validate(db_notif)
-                    await queue.put(out.model_dump(mode="json"))
+                    payload = out.model_dump(mode="json")
+                    payload["_sse_event"] = "notification"
+                    await queue.put(payload)
+
+                    # Dispara processamento de IA em background (não bloqueia o worker)
+                    asyncio.create_task(
+                        _process_ai_features(
+                            db_notif.id, notif_data.title, notif_data.message, queue
+                        ),
+                        name=f"ai-{db_notif.id}",
+                    )
 
         except asyncio.CancelledError:
             logger.info("[%s] Worker cancelado (shutdown).", folder)

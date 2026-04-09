@@ -79,6 +79,33 @@ async function alertAndSpeak(data) {
     }
 }
 
+// ===== TTS sem ping (usado para resumo de IA) =====
+async function speakText(text) {
+    if (!text) return;
+    if (audioCtx.state === "suspended") await audioCtx.resume();
+    // Cancela qualquer TTS anterior
+    if (currentTtsAudio) {
+        currentTtsAudio.pause();
+        currentTtsAudio.removeAttribute("src");
+        currentTtsAudio.load();
+        currentTtsAudio = null;
+    }
+    const encoded = encodeURIComponent(text.slice(0, 500));
+    currentTtsAudio = new Audio(`/api/tts?text=${encoded}&_t=${Date.now()}`);
+    currentTtsAudio.preload = "auto";
+    currentTtsAudio.load();
+    try {
+        await new Promise((resolve, reject) => {
+            currentTtsAudio.addEventListener("canplaythrough", resolve, { once: true });
+            currentTtsAudio.addEventListener("error", reject, { once: true });
+            setTimeout(resolve, 5000);
+        });
+        await currentTtsAudio.play();
+    } catch (e) {
+        console.warn("TTS resumo falhou:", e);
+    }
+}
+
 // ===== SSE Connection =====
 function connectSSE() {
     setConnectionStatus("connecting");
@@ -90,11 +117,37 @@ function connectSSE() {
         addNotificationCard(data);
         showToast(data);
         updateBadge(1);
-        alertAndSpeak(data);
+        // TTS removido — apenas ping; o TTS toca após o resumo da IA
+        playPing();
     });
 
     evtSource.addEventListener("ping", () => {
         // Heartbeat — mantém a conexão viva
+    });
+
+    evtSource.addEventListener("update", (event) => {
+        const data = JSON.parse(event.data);
+        // Localiza o card pelo data-notif-id
+        const card = document.querySelector(`[data-notif-id="${data.id}"]`);
+        if (card) {
+            const msgEl = card.querySelector("[data-msg]");
+            if (msgEl) {
+                msgEl.textContent = data.summary;
+                msgEl.classList.add("ai-summary");
+            }
+            // Adiciona badge de IA se ainda não existir
+            if (!card.querySelector(".ai-badge")) {
+                const badgeRow = card.querySelector(".flex.items-center.gap-2");
+                if (badgeRow) {
+                    const badge = document.createElement("span");
+                    badge.className = "ai-badge text-[10px] px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-400";
+                    badge.textContent = "IA";
+                    badgeRow.appendChild(badge);
+                }
+            }
+        }
+        // Ping + fala o resumo de IA (único TTS desta notificação)
+        playPing().then(() => speakText(data.summary));
     });
 
     evtSource.onopen = () => {
@@ -169,16 +222,22 @@ function getSenderIcon(data) {
     if (sender.includes("grafana"))    return `<svg class="w-6 h-6 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6m6 0h6m-6 0V9a2 2 0 012-2h2a2 2 0 012 2v10m6 0v-4a2 2 0 00-2-2h-2a2 2 0 00-2 2v4"/></svg>`;
     if (sender.includes("deploy") || sender.includes("jenkins") || sender.includes("github"))
         return `<svg class="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>`;
+    if (sender.includes("suap"))
+        return `<svg class="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"/></svg>`;
+    if (sender.includes("sistema.processos"))
+        return `<svg class="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>`;
     if (sender.includes("noreply") || sender.includes("no-reply"))
         return `<svg class="w-6 h-6 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>`;
 
     // Fallback por regra
     const ruleIcons = {
-        "Zabbix NTI CJ":   `<svg class="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
-        "Zabbix Alerts":   `<svg class="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>`,
-        "Monitoramento":   `<svg class="w-6 h-6 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>`,
-        "Deploy":          `<svg class="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>`,
-        "Teste Manual":    `<svg class="w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>`,
+        "Zabbix NTI CJ":      `<svg class="w-6 h-6 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`,
+        "Zabbix Alerts":      `<svg class="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>`,
+        "Monitoramento":      `<svg class="w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>`,
+        "Sistema Processos":  `<svg class="w-6 h-6 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>`,
+        "SUAP":               `<svg class="w-6 h-6 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 5v2m0 4v2m0 4v2M5 5a2 2 0 00-2 2v3a2 2 0 110 4v3a2 2 0 002 2h14a2 2 0 002-2v-3a2 2 0 110-4V7a2 2 0 00-2-2H5z"/></svg>`,
+        "Deploy":             `<svg class="w-6 h-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>`,
+        "Teste Manual":       `<svg class="w-6 h-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6 6 0 10-12 0v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>`,
     };
     return ruleIcons[rule] || `<svg class="w-6 h-6 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>`;
 }
@@ -188,9 +247,11 @@ function getRuleBadgeColor(rule) {
     const colors = {
         "Zabbix NTI CJ": "bg-red-500/20 text-red-400",
         "Zabbix Alerts": "bg-red-500/20 text-red-400",
-        "Monitoramento": "bg-yellow-500/20 text-yellow-400",
-        "Deploy": "bg-green-500/20 text-green-400",
-        "Teste Manual": "bg-blue-500/20 text-blue-400",
+        "Monitoramento":     "bg-blue-500/20 text-blue-400",
+        "Sistema Processos": "bg-emerald-500/20 text-emerald-400",
+        "SUAP":              "bg-amber-500/20 text-amber-400",
+        "Deploy":            "bg-green-500/20 text-green-400",
+        "Teste Manual":      "bg-blue-500/20 text-blue-400",
     };
     return colors[rule] || "bg-neutral-500/20 text-neutral-400";
 }
@@ -209,6 +270,7 @@ function addNotificationCard(data) {
 
     const card = document.createElement("div");
     card.className = "acrylic-card p-3.5 notif-enter cursor-default";
+    card.dataset.notifId = data.id;  // permite localizar o card pelo update de IA
     card.innerHTML = `
         <div class="flex items-start gap-3">
             <div class="mt-0.5 shrink-0">${getSenderIcon(data)}</div>
@@ -217,7 +279,7 @@ function addNotificationCard(data) {
                     <h3 class="text-sm font-semibold truncate">${escapeHtml(data.title)}</h3>
                     <span class="text-[10px] text-neutral-500 shrink-0">${formatTime(data.timestamp)}</span>
                 </div>
-                <p class="text-xs text-neutral-400 mb-2 line-clamp-2">${escapeHtml(data.message)}</p>
+                <p class="text-xs text-neutral-400 mb-2 line-clamp-2" data-msg>${escapeHtml(data.message)}</p>
                 <div class="flex items-center gap-2">
                     <span class="text-[10px] px-2 py-0.5 rounded-full ${getRuleBadgeColor(data.rule_matched)}">${escapeHtml(data.rule_matched || "")}</span>
                     <span class="text-[10px] text-neutral-500 truncate">${escapeHtml(data.sender)}</span>
@@ -299,10 +361,12 @@ const historyBtn     = document.getElementById("historyBtn");
 function getRuleBorderClass(rule) {
     if (!rule) return "rule-border-default";
     const r = rule.toLowerCase();
-    if (r.includes("zabbix"))        return "rule-border-zabbix";
-    if (r.includes("monitoramento")) return "rule-border-monitoramento";
-    if (r.includes("deploy"))        return "rule-border-deploy";
-    if (r.includes("teste"))         return "rule-border-teste";
+    if (r.includes("zabbix"))              return "rule-border-zabbix";
+    if (r.includes("monitoramento"))        return "rule-border-monitoramento";
+    if (r.includes("sistema processos"))    return "rule-border-sistema-processos";
+    if (r.includes("suap"))                return "rule-border-suap";
+    if (r.includes("deploy"))              return "rule-border-deploy";
+    if (r.includes("teste"))               return "rule-border-teste";
     return "rule-border-default";
 }
 
