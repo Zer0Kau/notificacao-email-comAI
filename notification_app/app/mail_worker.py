@@ -2,26 +2,31 @@
 
 import asyncio
 import email
+import json
 import logging
 import re
 from datetime import datetime
 from email.header import decode_header
 from email.utils import parseaddr
+from pathlib import Path
 from typing import Callable
 
 import aiohttp
 from bs4 import BeautifulSoup
 from imapclient import IMAPClient
+from py_vapid import Vapid02
+from pywebpush import WebPushException, webpush
+from sqlalchemy import select
 
 from .database import async_session
-from .models import Notification
+from .models import Notification, PushSubscription
 from .schemas import NotificationCreate
 
 logger = logging.getLogger(__name__)
 
 # Ollama — configurações de IA local
 _OLLAMA_URL = "http://localhost:11434/api/generate"
-_OLLAMA_MODEL = "nti-bot"
+_OLLAMA_MODEL = "nti-bot:latest"
 _OLLAMA_TIMEOUT = 60  # segundos
 
 # Sessão HTTP persistente — evita TCP/TLS handshake a cada chamada Ollama
@@ -34,6 +39,105 @@ def _get_http_session() -> aiohttp.ClientSession:
     if _http_session is None or _http_session.closed:
         _http_session = aiohttp.ClientSession()
     return _http_session
+
+
+# ============================================
+# VAPID — carregado como objecto Vapid02
+# ============================================
+def _load_vapid() -> tuple[Vapid02 | None, str]:
+    """Carrega a chave privada VAPID como objecto Vapid02.
+    Retorna (vapid_obj, mailto). Vapid02.from_file() aceita PKCS8 e SEC1.
+    """
+    import os
+
+    from .main import settings
+
+    # Usa a setting em vez de um caminho fixo — VAPID_PRIVATE_KEY_PATH existia
+    # mas nunca era lida, portanto mudar a variável não tinha efeito.
+    key_path = Path(settings.vapid_private_key_path)
+    if not key_path.exists():
+        logger.warning("[Push] Ficheiro VAPID não encontrado em %s", key_path)
+        return None, ""
+    try:
+        vapid = Vapid02.from_file(str(key_path))
+    except Exception as exc:
+        logger.error("[Push] Falha ao carregar chave VAPID: %s", exc)
+        return None, ""
+    mailto = settings.VAPID_MAILTO or os.environ.get("VAPID_MAILTO", "mailto:admin@localhost")
+    return vapid, mailto
+
+
+async def send_push_notifications(title: str, body: str, rule: str | None = None) -> None:
+    """Envia Web Push para todos os dispositivos registados.
+
+    Chamado após o resumo de IA estar pronto, garantindo que o corpo
+    da notificação contém o texto final gerado pelo modelo.
+    Subscrições expiradas/inválidas são apagadas automaticamente.
+    """
+    vapid, vapid_mailto = _load_vapid()
+    if not vapid:
+        logger.warning("[Push] Chave VAPID não configurada — push ignorado.")
+        return
+
+    async with async_session() as session:
+        result = await session.execute(select(PushSubscription))
+        subscriptions = result.scalars().all()
+
+    if not subscriptions:
+        return
+
+    payload = json.dumps({
+        "title": title,
+        "body": body,
+        "rule": rule or "",
+        "icon": "/static/icons/icon-192.png",
+        "badge": "/static/icons/icon-192.png",
+        "tag": f"notifica-{rule or 'default'}",
+    })
+
+    expired_endpoints: list[str] = []
+
+    for sub in subscriptions:
+        try:
+            await asyncio.to_thread(
+                webpush,
+                subscription_info={
+                    "endpoint": sub.endpoint,
+                    "keys": {
+                        "p256dh": sub.keys_p256dh,
+                        "auth": sub.keys_auth,
+                    },
+                },
+                data=payload,
+                vapid_private_key=vapid,
+                vapid_claims={"sub": vapid_mailto},
+                content_encoding="aes128gcm",
+                ttl=3600,
+            )
+            logger.info("[Push] Enviado para %s…", sub.endpoint[:60])
+        except WebPushException as exc:
+            status = exc.response.status_code if exc.response is not None else None
+            # 404/410 = subscription expirada ou revogada pelo utilizador
+            if status in (404, 410):
+                logger.info("[Push] Subscription expirada (%d) — removendo: %s…", status, sub.endpoint[:60])
+                expired_endpoints.append(sub.endpoint)
+            else:
+                logger.warning("[Push] Falha (%s) para %s…: %s", status, sub.endpoint[:60], exc)
+        except Exception as exc:
+            logger.warning("[Push] Erro inesperado para %s…: %s", sub.endpoint[:60], exc)
+
+    # Remove subscriptions expiradas
+    if expired_endpoints:
+        async with async_session() as session:
+            for ep in expired_endpoints:
+                result = await session.execute(
+                    select(PushSubscription).where(PushSubscription.endpoint == ep)
+                )
+                obj = result.scalar_one_or_none()
+                if obj:
+                    await session.delete(obj)
+            await session.commit()
+        logger.info("[Push] %d subscription(s) expirada(s) removida(s).", len(expired_endpoints))
 
 
 async def warmup_ollama() -> None:
@@ -65,6 +169,11 @@ def _build_filter_rules(
     rules: list[dict] = []
     if zabbix_sender:
         rules.append({
+            "name": "Zabbix Resolvido",
+            "sender": re.compile(re.escape(zabbix_sender), re.IGNORECASE),
+            "subject": re.compile(r"(resolved|recovered|resolvido|recuperado|\bok\b)", re.IGNORECASE),
+        })
+        rules.append({
             "name": "Zabbix NTI CJ",
             "sender": re.compile(re.escape(zabbix_sender), re.IGNORECASE),
             "subject": None,
@@ -76,6 +185,11 @@ def _build_filter_rules(
             "subject": None,
         })
     if suap_sender:
+        rules.append({
+            "name": "SUAP Resolvido",
+            "sender": re.compile(re.escape(suap_sender), re.IGNORECASE),
+            "subject": re.compile(r"(resolvido|resolvida|encerrado|encerrada|fechado|fechada|solucionado)", re.IGNORECASE),
+        })
         rules.append({
             "name": "SUAP",
             "sender": re.compile(re.escape(suap_sender), re.IGNORECASE),
@@ -182,6 +296,7 @@ async def _process_ai_features(
     title: str,
     message: str,
     queue: asyncio.Queue,
+    rule: str | None = None,
 ) -> None:
     """Gera resumo via Ollama e envia evento 'update' pelo SSE.
 
@@ -227,6 +342,10 @@ async def _process_ai_features(
             "id": notif_id,
             "summary": summary,
         })
+
+        # Envia push com o resumo final. O `rule` faz o service worker escolher
+        # o ícone/emoji por origem — sem ele todos os pushes saíam genéricos.
+        await send_push_notifications(title=title, body=summary, rule=rule)
 
     except asyncio.CancelledError:
         raise
@@ -281,9 +400,14 @@ async def imap_idle_worker(
     from .schemas import NotificationOut
 
     filter_rules = _build_filter_rules(zabbix_sender, sistema_processos_sender, suap_sender)
+    if folder.casefold() == "inbox":
+        # Tudo que chega à INBOX da conta monitorada é um contato para NT.CJ.
+        # As regras específicas continuam primeiro para preservar a classificação.
+        filter_rules.append({"name": "E-mail para NT.CJ", "sender": None, "subject": None})
     logger.info("[%s] Regras de filtro ativas: %s", folder, [r['name'] for r in filter_rules])
 
     first_connect = True
+    known_uids: set[int] | None = None
 
     while True:
         client: IMAPClient | None = None
@@ -308,10 +432,14 @@ async def imap_idle_worker(
             select_info = await asyncio.to_thread(client.select_folder, folder)
             msg_count = select_info.get(b"EXISTS", "?")
 
-            # Captura sequências UNSEEN já existentes para ignorá-los
-            existing_seqs = set(await asyncio.to_thread(client.search, ["UNSEEN"]))
-            logger.info("[%s] Pasta aberta (%s mensagens, %d UNSEEN pré-existentes ignorados). IDLE ativo (timeout=%ds).",
-                        folder, msg_count, len(existing_seqs), idle_timeout)
+            # Guarda os UIDs atuais como ponto de partida. UNSEEN não é confiável:
+            # outro cliente pode marcar a mensagem como lida antes deste worker
+            # consultar a caixa, embora ela continue sendo uma mensagem nova para nós.
+            current_uids = set(await asyncio.to_thread(client.search, ["ALL"]))
+            if known_uids is None:
+                known_uids = current_uids
+            logger.info("[%s] Pasta aberta (%s mensagens, %d UIDs conhecidos). IDLE ativo (timeout=%ds).",
+                        folder, msg_count, len(known_uids), idle_timeout)
 
             while True:
                 await asyncio.to_thread(client.idle)
@@ -335,10 +463,20 @@ async def imap_idle_worker(
                     elapsed += check_interval
 
                 try:
-                    await asyncio.to_thread(client.idle_done)
+                    extra = await asyncio.to_thread(client.idle_done)
+                    # idle_done pode retornar respostas não solicitadas (ex: FLAGS \Seen)
+                    # que chegaram enquanto o servidor encerrava o IDLE — é normal
+                    if extra:
+                        responses.extend(extra)
                 except Exception as exc:
-                    logger.warning("[%s] idle_done falhou: %s", folder, exc)
-                    break
+                    exc_str = str(exc)
+                    # Respostas não solicitadas (FLAGS, EXISTS, EXPUNGE) durante idle_done
+                    # são comportamento normal do Gmail — não reconectar
+                    if "unexpected response" in exc_str or "FLAGS" in exc_str:
+                        logger.debug("[%s] idle_done: resposta não solicitada ignorada: %s", folder, exc)
+                    else:
+                        logger.warning("[%s] idle_done falhou: %s", folder, exc)
+                        break
 
                 # Atualiza o pulso do health check (sinal de vida do worker)
                 if pulse_callback:
@@ -354,24 +492,24 @@ async def imap_idle_worker(
                 # Qualquer resposta IDLE = possível novo e-mail
                 logger.info("[%s] Atividade IDLE detectada: %s", folder, responses)
 
-                all_unseen = await asyncio.to_thread(client.search, ["UNSEEN"])
-                seqs = [s for s in all_unseen if s not in existing_seqs]
+                all_uids = set(await asyncio.to_thread(client.search, ["ALL"]))
+                seqs = sorted(all_uids - known_uids)
 
                 if not seqs:
                     logger.info("[%s] Nenhum e-mail novo após evento IDLE.", folder)
                     continue
 
                 # Registra para não reprocessar em ciclos futuros
-                existing_seqs.update(seqs)
+                known_uids.update(seqs)
 
                 logger.info("[%s] %d e-mail(s) novo(s) detectado(s).", folder, len(seqs))
 
                 raw_messages = await asyncio.to_thread(
-                    client.fetch, seqs, ["RFC822"]
+                    client.fetch, seqs, ["BODY.PEEK[]"]
                 )
 
                 for uid, data in raw_messages.items():
-                    raw = data.get(b"RFC822")
+                    raw = data.get(b"BODY[]") or data.get(b"RFC822")
                     if not raw:
                         continue
 
@@ -391,7 +529,11 @@ async def imap_idle_worker(
                     # Dispara processamento de IA em background (não bloqueia o worker)
                     asyncio.create_task(
                         _process_ai_features(
-                            db_notif.id, notif_data.title, notif_data.message, queue
+                            db_notif.id,
+                            notif_data.title,
+                            notif_data.message,
+                            queue,
+                            notif_data.rule_matched,
                         ),
                         name=f"ai-{db_notif.id}",
                     )

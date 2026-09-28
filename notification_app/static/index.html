@@ -2,25 +2,40 @@
 <html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Central de Notificações</title>
+
+    <!-- ===== PWA ===== -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#020617">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Notifica NTI">
+    <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Segoe+UI:wght@300;400;600;700&display=swap');
+        * { font-family: -apple-system, 'SF Pro Display', 'SF Pro Text', 'Segoe UI', system-ui, sans-serif; }
 
-        * { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
-
-        /* ===== Scrollbar estilo Windows 11 ===== */
-        ::-webkit-scrollbar { width: 6px; }
+        /* ===== Scrollbar fina/escura ===== */
+        ::-webkit-scrollbar { width: 3px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
+        ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.15); border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,0.3); }
 
-        /* ===== Backdrop Mica (Windows 11) ===== */
+        /* ===== Glass header (iOS frosted) ===== */
+        .glass-header {
+            background: rgba(2, 6, 23, 0.82);
+            backdrop-filter: blur(28px) saturate(180%);
+            -webkit-backdrop-filter: blur(28px) saturate(180%);
+        }
+
+        /* ===== Mica-bg para toasts (usado pelo script.js) ===== */
         .mica-bg {
-            background: linear-gradient(135deg, rgba(32,32,32,0.85) 0%, rgba(44,44,44,0.80) 100%);
-            backdrop-filter: blur(40px) saturate(150%);
-            -webkit-backdrop-filter: blur(40px) saturate(150%);
+            background: rgba(15, 23, 42, 0.95);
+            backdrop-filter: blur(40px) saturate(160%);
+            -webkit-backdrop-filter: blur(40px) saturate(160%);
         }
 
         /* ===== Toast Animation ===== */
@@ -37,21 +52,26 @@
 
         /* ===== Notification card slide-in ===== */
         @keyframes slide-down {
-            0%   { opacity: 0; transform: translateY(-12px); }
-            100% { opacity: 1; transform: translateY(0); }
+            0%   { opacity: 0; transform: translateY(-14px) scale(0.98); }
+            100% { opacity: 1; transform: translateY(0) scale(1); }
         }
-        .notif-enter { animation: slide-down 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        .notif-enter { animation: slide-down 0.36s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
 
-        /* ===== Acrylic card ===== */
+        /* ===== Card iOS-like (usado pelo script.js) ===== */
         .acrylic-card {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 8px;
-            transition: background 0.15s, border-color 0.15s;
+            background: rgba(15, 23, 42, 0.72);
+            border: 1px solid rgba(51, 65, 85, 0.55);
+            border-radius: 16px;
+            transition: background 0.15s, transform 0.12s ease, border-color 0.15s;
+            -webkit-tap-highlight-color: transparent;
         }
         .acrylic-card:hover {
-            background: rgba(255,255,255,0.08);
-            border-color: rgba(255,255,255,0.14);
+            background: rgba(30, 41, 59, 0.85);
+            border-color: rgba(71, 85, 105, 0.7);
+        }
+        .acrylic-card:active {
+            transform: scale(0.95);
+            background: rgba(30, 41, 59, 0.95);
         }
 
         /* ===== Badge pulse ===== */
@@ -61,24 +81,41 @@
         }
         .badge-pulse { animation: badge-pulse 0.6s ease-in-out; }
 
-        /* ===== Connection indicator ===== */
+        /* ===== Indicador de conexão ===== */
         .status-dot {
             width: 8px; height: 8px; border-radius: 50%;
             display: inline-block;
+            flex-shrink: 0;
             transition: background 0.3s;
         }
-        .status-connected    { background: #34d399; box-shadow: 0 0 6px rgba(52,211,153,0.5); }
-        .status-disconnected { background: #f87171; box-shadow: 0 0 6px rgba(248,113,113,0.5); }
-        .status-connecting   { background: #fbbf24; box-shadow: 0 0 6px rgba(251,191,36,0.5); }
+        .status-connected {
+            background: #34d399;
+            animation: conn-pulse 2.4s ease-in-out infinite;
+        }
+        .status-disconnected {
+            background: #f87171;
+            box-shadow: 0 0 0 3px rgba(248,113,113,0.25);
+        }
+        .status-connecting {
+            background: #fbbf24;
+            animation: conn-blink 1s ease-in-out infinite;
+        }
+        @keyframes conn-pulse {
+            0%   { box-shadow: 0 0 0 0   rgba(52,211,153,0.6); }
+            60%  { box-shadow: 0 0 0 6px rgba(52,211,153,0);   }
+            100% { box-shadow: 0 0 0 0   rgba(52,211,153,0);   }
+        }
+        @keyframes conn-blink {
+            0%, 100% { opacity: 1; }
+            50%      { opacity: 0.35; }
+        }
 
-        /* ===== Bottom Sheet (Histórico) ===== */
+        /* ===== Bottom Sheet ===== */
         .bottom-sheet {
             transform: translateY(100%);
-            transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+            transition: transform 0.42s cubic-bezier(0.16, 1, 0.3, 1);
         }
-        .bottom-sheet.open {
-            transform: translateY(0);
-        }
+        .bottom-sheet.open { transform: translateY(0); }
         .sheet-backdrop {
             opacity: 0;
             pointer-events: none;
@@ -89,142 +126,317 @@
             pointer-events: auto;
         }
 
-        /* Scrollbar thin/dark dentro do histórico */
-        .history-scroll::-webkit-scrollbar { width: 4px; }
+        /* Scrollbar do histórico */
+        .history-scroll::-webkit-scrollbar { width: 3px; }
         .history-scroll::-webkit-scrollbar-track { background: transparent; }
-        .history-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 2px; }
-        .history-scroll::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.20); }
+        .history-scroll::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.1); border-radius: 2px; }
 
-        /* Borda lateral colorida por regra */
+        /* ===== Bordas laterais por origem ===== */
         .rule-border-zabbix            { border-left: 3px solid #f87171; }
         .rule-border-monitoramento     { border-left: 3px solid #60a5fa; }
         .rule-border-sistema-processos { border-left: 3px solid #34d399; }
         .rule-border-suap              { border-left: 3px solid #fbbf24; }
         .rule-border-deploy            { border-left: 3px solid #34d399; }
         .rule-border-teste             { border-left: 3px solid #60a5fa; }
-        .rule-border-default           { border-left: 3px solid rgba(255,255,255,0.15); }
+        .rule-border-default           { border-left: 3px solid rgba(100,116,139,0.35); }
 
-        /* Ponto pulsante no botão flutuante */
+        /* ===== Live dot no botão flutuante ===== */
         @keyframes live-pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50%      { opacity: 0.5; transform: scale(1.6); }
+            0%, 100% { opacity: 1; transform: scale(1);   }
+            50%      { opacity: 0.4; transform: scale(1.8); }
         }
         .live-dot {
-            width: 6px; height: 6px; border-radius: 50%;
+            width: 5px; height: 5px; border-radius: 50%;
             background: #34d399;
             animation: live-pulse 2s ease-in-out infinite;
         }
 
-        /* Transição suave do resumo de IA */
+        /* ===== Resumo de IA ===== */
         [data-msg] { transition: color 0.6s ease; }
-        .ai-summary { color: #c4b5fd; } /* violet-300 */
+        .ai-summary { color: #c4b5fd; }
 
+        /* ===== Player de rádios ===== */
+        .radio-panel {
+            background: linear-gradient(135deg, rgba(15,23,42,0.96), rgba(20,34,55,0.88));
+            border-bottom: 1px solid rgba(51,65,85,0.55);
+        }
+        .radio-card { min-width: 124px; }
+        .radio-card.is-active { border-color: rgba(96,165,250,0.75); background: rgba(30,64,175,0.24); }
+        .radio-card.is-playing .radio-wave { animation: radio-wave 1s ease-in-out infinite; }
+        @keyframes radio-wave {
+            0%, 100% { transform: scaleY(.45); opacity: .45; }
+            50% { transform: scaleY(1); opacity: 1; }
+        }
+
+        /* ===== Safe area (iOS notch/home bar) ===== */
+        .safe-top    { padding-top: env(safe-area-inset-top, 0px); }
+        .safe-bottom { padding-bottom: max(env(safe-area-inset-bottom, 0px), 80px); }
+
+        /* ===== Banner de push ===== */
+        #pushBanner {
+            display: none;
+            transition: all 0.3s ease;
+        }
+        #pushBanner.visible { display: flex; }
+
+        /* ===== Borda sutil no container em telas grandes ===== */
+        @media (min-width: 768px) {
+            .app-container {
+                max-width: none;
+                border-left:  1px solid rgba(51,65,85,0.25);
+                border-right: 1px solid rgba(51,65,85,0.25);
+            }
+        }
+
+        .tv-main { min-height: 0; }
+        .tv-notifications { flex: 0 0 60%; min-width: 0; }
+        .tv-side { flex: 0 0 40%; min-width: 0; }
+        .tv-dashboard { flex: 1; min-height: 0; overflow-y: auto; }
+        .counter-card { min-width: 112px; }
+        #categoryCounters {
+            align-content: start;
+        }
+        #categoryCounters .counter-card {
+            min-height: 82px;
+            flex-direction: column;
+            align-items: flex-start;
+            justify-content: space-between;
+            padding: 14px;
+        }
+        #categoryCounters .counter-card strong {
+            font-size: 1.5rem;
+            line-height: 1;
+        }
+        .radio-tv-control:focus-visible,
+        #radioPlayBtn:focus-visible {
+            outline: 3px solid #38bdf8;
+            outline-offset: 4px;
+        }
+        @media (max-width: 767px) {
+            .tv-main { display: block; }
+            .tv-notifications, .tv-side { width: 100%; }
+            .tv-dashboard { max-height: 55vh; }
+            .tv-radio { border-top: 1px solid rgba(51,65,85,0.55); }
+        }
     </style>
 </head>
-<body class="bg-neutral-900 text-white min-h-screen flex items-center justify-center">
+<body class="bg-slate-950 text-white min-h-screen">
 
-    <!-- ===== CENTRAL DE NOTIFICAÇÕES ===== -->
-    <div class="w-full max-w-md mx-auto h-screen flex flex-col">
+    <!-- ===== APP CONTAINER — mobile full-width / desktop max-w-2xl centrado ===== -->
+    <div class="app-container w-full max-w-none mx-auto min-h-screen flex flex-col">
 
-        <!-- Header -->
-        <div class="mica-bg border-b border-white/10 px-5 py-4 flex items-center justify-between sticky top-0 z-30">
-            <div class="flex items-center gap-3">
-                <div>
-                    <h1 class="text-base font-semibold tracking-tight">Notificações</h1>
+        <!-- ===== HEADER ===== -->
+        <div class="glass-header safe-top sticky top-0 z-30">
+            <div class="px-5 pt-4 pb-3 flex items-center justify-between border-b border-slate-800/60">
+
+                <!-- Esquerda: Título + status de conexão -->
+                <div class="flex flex-col gap-1">
+                    <h1 class="text-lg font-bold tracking-tight text-white leading-none">Notificações</h1>
                     <div class="flex items-center gap-2 mt-0.5">
                         <span id="statusDot" class="status-dot status-connecting"></span>
-                        <span id="statusText" class="text-[11px] text-neutral-400">Conectando...</span>
+                        <span id="statusText" class="text-[11px] text-slate-400 font-medium">Conectando...</span>
                     </div>
                 </div>
-            </div>
-            <div class="flex items-center gap-2">
-                <span id="badgeCount" class="hidden bg-blue-500 text-[11px] font-bold rounded-full w-5 h-5 flex items-center justify-center">0</span>
-                <button
-                    onclick="sendTestNotification()"
-                    class="text-xs text-neutral-400 hover:text-white bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-md transition"
-                    title="Enviar notificação de teste"
-                >
-                    Testar
-                </button>
-                <button
-                    onclick="clearAll()"
-                    class="text-xs text-neutral-400 hover:text-white hover:bg-white/10 px-3 py-1.5 rounded-md transition"
-                >
-                    Limpar tudo
-                </button>
+
+                <!-- Direita: badge + controles -->
+                <div class="flex items-center gap-2">
+                    <span id="badgeCount" class="hidden bg-blue-500 text-[11px] font-bold rounded-full w-5 h-5 flex items-center justify-center">0</span>
+
+                    <!-- Botão mute — silencia som e TTS -->
+                    <button
+                        id="muteBtn"
+                        onclick="toggleMute()"
+                        class="relative text-slate-500 hover:text-white active:scale-95 hover:bg-slate-800/60 active:bg-slate-700 p-1.5 rounded-xl transition-all"
+                        title="Som ativado — clique para mutar"
+                        aria-label="Mutar/desmutar notificações"
+                    >
+                        <svg id="muteIcon" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15.536 8.464a5 5 0 010 7.072M18.364 5.636a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z"/>
+                        </svg>
+                    </button>
+
+                    <!-- Botão sino push — sempre visível, estado reflecte permissão -->
+                    <button
+                        id="pushBellBtn"
+                        onclick="handleBellTap()"
+                        class="relative text-slate-500 hover:text-white active:scale-95 hover:bg-slate-800/60 active:bg-slate-700 p-1.5 rounded-xl transition-all"
+                        title="Notificações push"
+                        aria-label="Estado das notificações push"
+                    >
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+                        </svg>
+                        <span id="pushBellDot" class="absolute top-1 right-1 w-2 h-2 rounded-full bg-slate-600 ring-1 ring-slate-950"></span>
+                    </button>
+
+                    <!-- Dropdown Testar -->
+                    <div class="relative" id="testDropdownWrapper">
+                        <div class="flex items-stretch">
+                            <button
+                                onclick="sendTestNotification('Teste Manual')"
+                                class="text-xs text-slate-400 hover:text-white active:text-white bg-slate-800/60 hover:bg-slate-700/80 active:bg-slate-700 active:scale-95 px-3 py-1.5 rounded-l-xl transition-all border-r border-slate-700/50"
+                                title="Enviar notificação de teste genérica"
+                            >
+                                Testar
+                            </button>
+                            <button
+                                onclick="toggleTestDropdown()"
+                                class="text-xs text-slate-400 hover:text-white active:text-white bg-slate-800/60 hover:bg-slate-700/80 active:bg-slate-700 active:scale-95 px-2 py-1.5 rounded-r-xl transition-all"
+                                title="Escolher cenário de teste"
+                            >
+                                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                                </svg>
+                            </button>
+                        </div>
+                        <!-- Menu dropdown -->
+                        <div id="testDropdownMenu"
+                            class="hidden absolute right-0 mt-1.5 w-52 rounded-2xl overflow-hidden z-50 shadow-2xl shadow-black/60"
+                            style="background: rgba(2,6,23,0.97); border: 1px solid rgba(51,65,85,0.5); backdrop-filter: blur(24px);">
+                            <div class="px-3 py-2 text-[10px] text-slate-500 uppercase tracking-widest border-b border-slate-800">Cenário de teste</div>
+                            <button onclick="sendTestNotification('Zabbix NTI CJ')"
+                                class="w-full text-left px-3 py-2.5 text-xs text-slate-300 hover:bg-slate-800 active:bg-slate-700 transition flex items-center gap-2.5">
+                                <span class="w-2 h-2 rounded-full bg-red-400 shrink-0"></span> Zabbix NTI CJ
+                            </button>
+                            <button onclick="sendTestNotification('Sistema Processos')"
+                                class="w-full text-left px-3 py-2.5 text-xs text-slate-300 hover:bg-slate-800 active:bg-slate-700 transition flex items-center gap-2.5">
+                                <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span> Sistema Processos
+                            </button>
+                            <button onclick="sendTestNotification('SUAP')"
+                                class="w-full text-left px-3 py-2.5 text-xs text-slate-300 hover:bg-slate-800 active:bg-slate-700 transition flex items-center gap-2.5">
+                                <span class="w-2 h-2 rounded-full bg-amber-400 shrink-0"></span> SUAP
+                            </button>
+                            <div class="border-t border-slate-800 my-1"></div>
+                            <button onclick="sendTestPush()" id="testPushBtn"
+                                class="w-full text-left px-3 py-2.5 text-xs text-slate-300 hover:bg-slate-800 active:bg-slate-700 transition flex items-center gap-2.5">
+                                <span class="text-sm">🔔</span> Teste Push Nativo
+                            </button>
+                        </div>
+                    </div>
+
+                    <button
+                        onclick="clearAll()"
+                        class="text-xs text-slate-400 hover:text-white active:text-white hover:bg-slate-800/60 active:bg-slate-700 active:scale-95 px-3 py-1.5 rounded-xl transition-all"
+                    >
+                        Limpar
+                    </button>
+                </div>
             </div>
         </div>
 
-        <!-- Lista de Notificações -->
-        <div id="notificationList" class="flex-1 overflow-y-auto px-3 py-3 space-y-2">
-            <!-- Placeholder -->
-            <div id="emptyState" class="flex flex-col items-center justify-center h-full text-neutral-500">
-                <svg class="w-16 h-16 mb-4 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <!-- ===== BANNER DE PUSH (aparece quando ação é necessária) ===== -->
+        <div id="pushBanner" class="items-center gap-3 px-4 py-3 border-b border-slate-800/60"
+             style="background: rgba(2,6,23,0.9);">
+            <span id="pushBannerIcon" class="text-lg shrink-0">🔔</span>
+            <div class="flex-1 min-w-0">
+                <p id="pushBannerTitle" class="text-xs font-semibold text-slate-200">Ativar Notificações</p>
+                <p id="pushBannerDesc" class="text-[11px] text-slate-400 mt-0.5">Receba alertas mesmo com o app fechado.</p>
+            </div>
+            <button
+                id="pushBannerBtn"
+                onclick="handlePushBannerTap()"
+                class="shrink-0 text-[11px] font-semibold px-3 py-1.5 rounded-xl bg-blue-500 hover:bg-blue-400 active:scale-95 active:bg-blue-600 text-white transition-all"
+            >Ativar</button>
+            <button
+                onclick="dismissPushBanner()"
+                class="shrink-0 text-slate-500 hover:text-slate-300 active:scale-95 transition-all p-1"
+                aria-label="Fechar"
+            >
+                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- ===== ÁREA PRINCIPAL PARA TV ===== -->
+        <main class="tv-main flex flex-1">
+            <!-- ===== NOTIFICAÇÕES: 60% ===== -->
+            <section class="tv-notifications flex flex-col border-r border-slate-800/60" aria-labelledby="notificationsTitle">
+                <div class="flex items-center justify-between px-5 pt-5 pb-2">
+                    <div>
+                        <h2 id="notificationsTitle" class="text-base font-bold text-slate-100">Chamados e notificações</h2>
+                        <p class="text-[11px] text-slate-500 mt-1">Atualizações em tempo real</p>
+                    </div>
+                    <span id="notificationTotal" class="text-xs text-slate-500">0 abertas</span>
+                </div>
+                <div id="notificationList" class="flex-1 overflow-y-auto px-4 py-3 space-y-2.5 safe-bottom">
+                    <div id="emptyState" class="flex flex-col items-center justify-center h-full py-24 text-slate-600">
+                <svg class="w-16 h-16 mb-4 opacity-20" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1"
                         d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
                 </svg>
-                <p class="text-sm">Nenhuma notificação</p>
-                <p class="text-xs mt-1 text-neutral-600">As notificações aparecerão aqui em tempo real</p>
+                <p class="text-sm font-medium">Nenhuma notificação</p>
+                <p class="text-xs mt-1 text-slate-700" data-empty-hint>As notificações aparecerão aqui em tempo real</p>
             </div>
-        </div>
-    </div>
-
-    <!-- ===== BOTÃO FLUTUANTE — HISTÓRICO ===== -->
-    <button
-        id="historyBtn"
-        onclick="toggleHistory()"
-        class="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-5 py-2.5 rounded-full
-               bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20
-               backdrop-blur-xl shadow-lg shadow-black/30 transition-all duration-200 group"
-    >
-        <svg class="w-4 h-4 text-neutral-400 group-hover:text-white transition" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-        </svg>
-        <span class="text-xs text-neutral-400 group-hover:text-white transition">Histórico</span>
-        <span class="live-dot" id="liveDot"></span>
-    </button>
-
-    <!-- ===== BACKDROP do Bottom Sheet ===== -->
-    <div id="sheetBackdrop" class="sheet-backdrop fixed inset-0 bg-black/40 backdrop-blur-sm z-40" onclick="toggleHistory()"></div>
-
-    <!-- ===== BOTTOM SHEET — HISTÓRICO ===== -->
-    <div id="historySheet" class="bottom-sheet fixed inset-x-0 bottom-0 z-50 flex justify-center pointer-events-none">
-        <div class="w-full max-w-lg pointer-events-auto rounded-t-2xl shadow-2xl shadow-black/60 border border-white/10 border-b-0 overflow-hidden"
-             style="height: 60vh; background: linear-gradient(180deg, rgba(30,30,30,0.97) 0%, rgba(24,24,24,0.98) 100%);
-                    backdrop-filter: blur(60px) saturate(180%); -webkit-backdrop-filter: blur(60px) saturate(180%);">
-
-            <!-- Handle bar -->
-            <div class="flex justify-center pt-3 pb-1">
-                <div class="w-10 h-1 rounded-full bg-white/15"></div>
-            </div>
-
-            <!-- Header -->
-            <div class="flex items-center justify-between px-5 py-2.5 border-b border-white/8">
-                <div class="flex items-center gap-2">
-                    <svg class="w-4 h-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                    </svg>
-                    <h2 class="text-sm font-semibold text-neutral-200">Histórico de Notificações</h2>
-                    <span id="historyCount" class="text-[10px] text-neutral-500"></span>
                 </div>
-                <button onclick="toggleHistory()" class="text-neutral-500 hover:text-white hover:bg-white/10 rounded-md p-1.5 transition">
-                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                    </svg>
-                </button>
-            </div>
+            </section>
 
-            <!-- Lista scrollável -->
-            <div id="historyList" class="history-scroll overflow-y-auto px-4 py-3 space-y-2" style="height: calc(60vh - 72px);">
-                <p class="text-xs text-neutral-500 text-center py-10">Carregando...</p>
+            <!-- ===== COLUNA DIREITA: painel de demandas + rádio ===== -->
+            <div class="tv-side flex flex-col">
+                <!-- Painel: contadores e resumo de conclusões.
+                     Fica fora do <aside> da rádio — são métricas de demanda,
+                     não conteúdo do rádio, e no telemóvel precisam de ser
+                     alcançáveis sem percorrer a lista toda. -->
+                <section class="tv-dashboard p-5" aria-labelledby="dashboardTitle">
+                    <h2 id="dashboardTitle" class="sr-only">Painel de demandas</h2>
+                    <div id="categoryCounters" class="grid grid-cols-2 gap-3 content-start mb-5" aria-label="Contadores de notificações"></div>
+                    <section id="reportSummary" class="acrylic-card p-3" aria-label="Resumo de conclusões"></section>
+                </section>
+
+                <!-- ===== RÁDIO ===== -->
+                <aside class="tv-radio p-5" aria-labelledby="radioTitle">
+                    <section class="radio-panel rounded-2xl p-4 shadow-2xl shadow-black/30" aria-labelledby="radioTitle">
+                        <div class="flex items-start justify-between gap-4 mb-3">
+                            <div>
+                                <div class="flex items-center gap-2">
+                                    <span class="flex items-center justify-center w-8 h-8 rounded-xl bg-sky-500/15 text-sky-300">
+                                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M4 9a8 8 0 0116 0M7 12a5 5 0 0110 0M10 15a2 2 0 014 0m-2 3h.01"/></svg>
+                                    </span>
+                                    <div><h2 id="radioTitle" class="text-base font-bold text-slate-100">Rádio ao vivo</h2><p id="radioNowPlaying" class="text-xs text-slate-500 mt-0.5">Escolha uma estação</p></div>
+                                </div>
+                            </div>
+                            <button id="radioPlayBtn" onclick="toggleRadioPlayback()" class="flex items-center justify-center w-10 h-10 rounded-full bg-sky-500 hover:bg-sky-400 active:scale-95 text-white transition" aria-label="Reproduzir rádio" title="Reproduzir rádio">
+                                <svg id="radioPlayIcon" class="w-4 h-4 ml-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5.14v13.72a1 1 0 001.54.84l10.18-6.86a1 1 0 000-1.68L9.54 4.3A1 1 0 008 5.14z"/></svg>
+                            </button>
+                        </div>
+                        <div class="hidden md:flex items-center justify-center gap-3 mb-4" aria-label="Trocar estação">
+                            <button id="radioPreviousBtn" onclick="changeRadioStation(-1)" class="radio-tv-control flex items-center justify-center w-12 h-10 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white active:scale-95 transition" aria-label="Rádio anterior" title="Rádio anterior">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" stroke-linecap="round" d="M15 18l-6-6 6-6"/></svg>
+                            </button>
+                            <span class="text-[11px] text-slate-500 min-w-24 text-center">Trocar rádio</span>
+                            <button id="radioNextBtn" onclick="changeRadioStation(1)" class="radio-tv-control flex items-center justify-center w-12 h-10 rounded-xl bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white active:scale-95 transition" aria-label="Próxima rádio" title="Próxima rádio">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" stroke-linecap="round" d="M9 18l6-6-6-6"/></svg>
+                            </button>
+                        </div>
+                        <div id="radioPresets" class="grid grid-cols-2 gap-2 max-h-44 overflow-y-auto pr-1 md:hidden" role="list" aria-label="Estações de rádio"></div>
+                        <audio id="radioAudio" preload="none"></audio>
+                    </section>
+                </aside>
             </div>
-        </div>
+        </main>
+
+    </div><!-- /app-container -->
+
+    <!-- ===== TOAST CONTAINER ===== -->
+    <div id="toastContainer" class="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
     </div>
 
-    <!-- ===== TOAST CONTAINER (canto inferior direito) ===== -->
-    <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
-    </div>
+    <script src="/static/script.js?v=35"></script>
 
-    <script src="/static/script.js?v=15"></script>
+    <!-- ===== Service Worker ===== -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker
+                    .register('/sw.js', { scope: '/' })
+                    .then((reg) => {
+                        console.log('[SW] Registrado, scope:', reg.scope);
+                    })
+                    .catch((err) => {
+                        console.warn('[SW] Falha no registo:', err);
+                    });
+            });
+        }
+    </script>
 </body>
 </html>

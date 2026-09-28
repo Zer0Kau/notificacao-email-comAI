@@ -3,6 +3,13 @@
 
 # Banco de dados SQLite
 *.db
+# Backups do banco (*.db.bak-<timestamp> não casa em *.db)
+*.db.bak-*
+*.db-journal
+
+# Chave privada VAPID — nunca versionar
+vapid_private.pem
+*.pem
 
 # Ambiente virtual Python
 .venv/
