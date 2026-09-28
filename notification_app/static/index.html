@@ -196,17 +196,6 @@
         #categoryCounters {
             align-content: start;
         }
-        /* Na TV os contadores passam a 4 colunas. Com 2 colunas, 7 cartões
-           ocupavam 4 linhas (~354px) e o painel nunca cabia na altura;
-           em 4 colunas são 2 linhas e sobra espaço para o relatório. */
-        @media (min-width: 768px) {
-            #categoryCounters {
-                display: grid;
-                grid-template-columns: repeat(4, minmax(0, 1fr));
-                gap: 10px;
-                margin-bottom: 12px;
-            }
-        }
         #categoryCounters .counter-card {
             min-height: 82px;
             flex-direction: column;
@@ -218,89 +207,10 @@
             font-size: 1.5rem;
             line-height: 1;
         }
-        /* Em ecrãs largos o painel tem de caber sem scroll: cartão mais
-           compacto e menos padding lateral liberta altura para o relatório.
-           Medido em 1080p: sem isto o painel excede em ~22px. */
-        @media (min-width: 768px) {
-            .tv-dashboard { padding: 12px; }
-            #categoryCounters { gap: 10px; margin-bottom: 10px; }
-            #categoryCounters .counter-card {
-                min-height: 64px;
-                padding: 10px 12px;
-            }
-            #categoryCounters .counter-card strong { font-size: 1.25rem; }
-            .tv-radio { padding: 12px; }
-        }
         .radio-tv-control:focus-visible,
         #radioPlayBtn:focus-visible {
             outline: 3px solid #38bdf8;
             outline-offset: 4px;
-        }
-
-        /* ===== Viewport scaling (TV 16:9 / 4K) — encaixa mantendo o design =====
-           O contentor tem tamanho LÓGICO fixo (--app-w/--app-h) e o JS
-           aplica transform: scale() para o fazer caber no ecrã real. A
-           largura/altura NÃO podem ser viewport-relative aqui — isso daria
-           um duplo escalonamento (o contentor já ajustava ao ecrã e depois
-           era escalado outra vez). */
-        .app-viewport {
-            position: fixed;
-            inset: 0;
-            width: 100vw;
-            height: 100dvh;
-            height: 100vh;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            z-index: 0;
-        }
-        .app-container {
-            width: var(--app-w, 1600px);
-            height: var(--app-h, 900px);
-            max-width: none;
-            max-height: none;
-            min-height: 0;
-            flex-shrink: 0;
-            transform-origin: center center;
-            will-change: transform;
-        }
-        body { min-height: 0; }
-        .tv-main { height: 100%; }
-        .tv-notifications,
-        .tv-side { height: 100%; }
-        /* overflow-y:auto e não hidden: com poucos dias o painel cabe inteiro
-           (sem scroll), mas se o relatório crescer muito continua a ser
-           alcançável em vez de ficar cortado. */
-        .tv-dashboard { max-height: 100%; overflow-y: auto; display: flex; flex-direction: column; }
-        .tv-radio { flex-shrink: 0; }
-        #reportSummary { flex-shrink: 0; }
-
-        /* Em ecrãs largos (TV/desktop) deixa de haver 80px de espaço reservado
-           a um botão flutuante que não existe; só se mantém o safe-area real. */
-        @media (min-width: 768px) {
-            .safe-bottom { padding-bottom: env(safe-area-inset-bottom, 0px); }
-        }
-
-        /* Telemóvel: volta ao fluxo natural, sem escala nem viewport fixa.
-           A lista mantém o seu próprio scroll (como na TV) em vez de empurrar
-           a página inteira — é isso que fazia a página rolar milhares de px. */
-        @media (max-width: 767px) {
-            .app-viewport {
-                position: static;
-                width: 100%;
-                height: auto;
-                overflow: visible;
-                display: block;
-            }
-            .app-container {
-                width: 100%;
-                height: auto;
-                min-height: 100vh;
-                transform: none;
-            }
-            .tv-notifications { max-height: 72vh; }
-            .tv-notifications #notificationList { min-height: 0; }
         }
         @media (max-width: 767px) {
             .tv-main { display: block; }
@@ -310,16 +220,10 @@
         }
     </style>
 </head>
-<body class="bg-slate-950 text-white">
-
-    <!-- ===== APP VIEWPORT =====
-         Envelope de tamanho fixo. Dentro dele o .app-container vive num
-         tamanho lógico (1600x900 por omissão) e o JS escala tudo com
-         transform: scale() para caber no ecrã real — sem alterar o design. -->
-    <div id="appViewport" class="app-viewport">
+<body class="bg-slate-950 text-white min-h-screen">
 
     <!-- ===== APP CONTAINER — mobile full-width / desktop max-w-2xl centrado ===== -->
-    <div class="app-container w-full mx-auto flex flex-col">
+    <div class="app-container w-full max-w-none mx-auto min-h-screen flex flex-col">
 
         <!-- ===== HEADER ===== -->
         <div class="glass-header safe-top sticky top-0 z-30">
@@ -511,19 +415,13 @@
             </div>
         </main>
 
-        <!-- ===== TOAST CONTAINER =====
-             Dentro do contentor escalado (e não em `fixed` sobre o viewport
-             real) para o aviso ter o mesmo tamanho que o resto da interface
-             na TV. `fixed` passa a resolver-se contra o .app-container
-             transformaado. -->
-        <div id="toastContainer" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 w-80 pointer-events-none">
-        </div>
-
     </div><!-- /app-container -->
 
-    </div><!-- /app-viewport -->
+    <!-- ===== TOAST CONTAINER ===== -->
+    <div id="toastContainer" class="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
+    </div>
 
-    <script src="/static/script.js?v=36"></script>
+    <script src="/static/script.js?v=35"></script>
 
     <!-- ===== Service Worker ===== -->
     <script>
