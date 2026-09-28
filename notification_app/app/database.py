@@ -1,10 +1,21 @@
 """Configuração do banco de dados SQLite com SQLAlchemy Async."""
 
+import os
+from pathlib import Path
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = "sqlite+aiosqlite:///./notifications.db"
+# O caminho tem de ser absoluto e relativo ao projecto, não ao directório de
+# trabalho. Com "./notifications.db" o ficheiro seguido depende de onde o
+# processo arranca: o PM2 arrancava bem por acaso (tem cwd definido), mas
+# qualquer outro arranque — manual, cron, container — abria silenciosamente
+# uma BD vazia em vez de a existente. DATABASE_PATH permite apontar para
+# outro sítio sem tocar em código.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = Path(os.environ.get("DATABASE_PATH") or _PROJECT_ROOT / "notifications.db")
+DATABASE_URL = f"sqlite+aiosqlite:///{DB_PATH}"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
