@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-mode="tv">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
@@ -212,18 +212,90 @@
             outline: 3px solid #38bdf8;
             outline-offset: 4px;
         }
-        @media (max-width: 767px) {
-            .tv-main { display: block; }
-            .tv-notifications, .tv-side { width: 100%; }
-            .tv-dashboard { max-height: 55vh; }
-            .tv-radio { border-top: 1px solid rgba(51,65,85,0.55); }
+
+        /* ===== Modo TV =====
+           O layout de TV é controlado por um atributo em <html data-mode="tv">
+           definido por JS, e NÃO por media query. Motivo: alguns APKs de TV
+           reportam uma largura CSS estreita (<768px) mesmo em painel 4K, e um
+           media query basedo na largura trocava a TV para o layout mobile.
+
+           Em modo TV:
+             - as colunas ficam lado a lado SEMPRE (60/40);
+             - o contentor tem tamanho lógico fixo e é escalado por JS
+               (transform: scale) para caber no ecrã real;
+             - nada usa 100vh/min-h-screen, para a página nunca rolar.
+
+           Em modo mobile (data-mode="mobile", abaixo do breakpoint no JS):
+           mantém o fluxo vertical normal. */
+        html[data-mode="tv"] { overflow: hidden; }
+        html[data-mode="tv"] body { min-height: 0; }
+        /* Na TV o conteúdo nunca rola (overflow hidden), por isso o sticky da
+           header é desnecessário e ainda conflita com o transform: scale
+           (a header era colada ao viewport real em top=108, por cima da
+           lista). Static devolve a header ao topo do fluxo escalado. */
+        html[data-mode="tv"] .glass-header { position: static; }
+        html[data-mode="tv"] .app-viewport {
+            position: fixed;
+            inset: 0;
+            width: 100vw;
+            height: 100vh; /* não usar dvh: algunas WebViews de TV dão 0 */
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
+        html[data-mode="tv"] .app-container {
+            width: var(--app-w, 1600px);
+            height: var(--app-h, 900px);
+            max-width: none;
+            min-height: 0;
+            flex-shrink: 0;
+            transform-origin: center center;
+        }
+        html[data-mode="tv"] .tv-main { display: flex; height: 100%; }
+        html[data-mode="tv"] .tv-notifications,
+        html[data-mode="tv"] .tv-side { width: auto; height: 100%; }
+        html[data-mode="tv"] .tv-dashboard { max-height: 100%; }
+        html[data-mode="tv"] #categoryCounters {
+            display: grid;
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+        html[data-mode="tv"] #categoryCounters .counter-card {
+            min-height: 64px;
+            padding: 10px 12px;
+        }
+        html[data-mode="tv"] #categoryCounters .counter-card strong { font-size: 1.25rem; }
+        html[data-mode="tv"] .tv-dashboard,
+        html[data-mode="tv"] .tv-radio { padding: 12px; }
+        /* Em TV não há botão flutuante a reservar espaço; fica só o safe-area. */
+        html[data-mode="tv"] .safe-bottom { padding-bottom: 0; }
+        html[data-mode="tv"] #radioPresets { display: none; }
+
+        /* Em mobile mantém o fluxo normal. Este caminho só é usado quando o JS
+           decide data-mode="mobile" (viewport estreito E toque). */
+        html[data-mode="mobile"] body,
+        html[data-mode="mobile"] .app-container { min-height: 100vh; }
+        html[data-mode="mobile"] .tv-main { display: block; }
+        html[data-mode="mobile"] .tv-notifications,
+        html[data-mode="mobile"] .tv-side { width: 100%; }
+        html[data-mode="mobile"] .tv-dashboard { max-height: 55vh; }
+        html[data-mode="mobile"] .tv-radio { border-top: 1px solid rgba(51,65,85,0.55); }
     </style>
 </head>
-<body class="bg-slate-950 text-white min-h-screen">
+<body class="bg-slate-950 text-white">
 
-    <!-- ===== APP CONTAINER — mobile full-width / desktop max-w-2xl centrado ===== -->
-    <div class="app-container w-full max-w-none mx-auto min-h-screen flex flex-col">
+    <!-- O wrapper .app-viewport só é posicionado/dimensionado em data-mode="tv"
+         (ver CSS). Fora desse modo é transparente ao fluxo normal. -->
+    <div id="appViewport" class="app-viewport">
+
+    <!-- ===== APP CONTAINER =====
+         Sem max-w-none/min-h-screen aqui: em modo TV o tamanho é definido
+         pelo CSS (--app-w/--app-h). Essas classes Tailwind colidiam com o
+         CSS de modo TV e podiam impor w-full/min-height, trocando a TV
+         para o layout mobile. -->
+    <div class="app-container w-full mx-auto flex flex-col">
 
         <!-- ===== HEADER ===== -->
         <div class="glass-header safe-top sticky top-0 z-30">
@@ -415,13 +487,17 @@
             </div>
         </main>
 
+        <!-- ===== TOAST CONTAINER =====
+             Dentro do contentor para escalar com a interface. Em mobile
+             continua em fixed normal (o contentor não tem transform). -->
+        <div id="toastContainer" class="fixed bottom-6 right-4 md:bottom-6 md:right-6 z-50 flex flex-col gap-3 w-80 max-w-full pointer-events-none">
+        </div>
+
     </div><!-- /app-container -->
 
-    <!-- ===== TOAST CONTAINER ===== -->
-    <div id="toastContainer" class="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 flex flex-col gap-3 max-w-sm w-full pointer-events-none">
-    </div>
+    </div><!-- /app-viewport -->
 
-    <script src="/static/script.js?v=35"></script>
+    <script src="/static/script.js?v=38"></script>
 
     <!-- ===== Service Worker ===== -->
     <script>

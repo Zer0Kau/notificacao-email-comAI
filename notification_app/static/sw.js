@@ -4,12 +4,12 @@
  * Rotas /api/* nunca são interceptadas (SSE e TTS são streams).
  */
 
-const CACHE_NAME = 'notifica-nti-v9';
+const CACHE_NAME = 'notifica-nti-v12';
 
 // Ativos do app shell a pré-cachear no install
 const SHELL_ASSETS = [
     '/',
-    '/static/script.js?v=35',
+    '/static/script.js?v=38',
     '/manifest.json',
 ];
 

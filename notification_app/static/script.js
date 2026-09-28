@@ -697,6 +697,11 @@ function addNotificationCard(data) {
 
 // ===== Toast (notificação flutuante) =====
 function isMobile() {
+    // Usa o mesmo modo do layout em vez de olhar só a largura: um APK de TV
+    // pode reportar <768px e mesmo assim não é um telemóvel.
+    if (document.documentElement.getAttribute('data-mode')) {
+        return document.documentElement.getAttribute('data-mode') === 'mobile';
+    }
     return window.innerWidth <= 768;
 }
 
@@ -903,13 +908,74 @@ async function sendTestNotification(rule = "Teste Manual") {
 }
 
 // ===== Inicialização =====
+/* ============================================================
+   Modo TV — layout lado a lado + escala, sem media query
+   ============================================================ */
+
+// Tamanho lógico do painel. Menor = conteúdo maior em relação ao ecrã.
+const APP_BASE_W = 1600;
+const APP_BASE_H = 900;
+
+// A TV é SEMPRE paisagem (width >= height); o telemóvel do kiosk é retrato.
+// Um APK de TV pode reportar uma largura/altura CSS pequena (ex.: 960x540
+// com dpr 4, ou 640x360 com dpr 6, que são fisicamente iguais) e o modo TV
+// tem de se manter mesmo assim — o scale compensa a densidade. Por isso
+// aqui não há filtro por tamanho: paisagem => TV, retrato => mobile.
+// Nota: o touch NÃO é critério — as TVs Android têm touch.
+function detectTVMode() {
+    return window.innerWidth >= window.innerHeight ? "tv" : "mobile";
+}
+
+function applyViewportScale() {
+    const root = document.documentElement;
+    const viewport = document.getElementById('appViewport');
+    const container = document.querySelector('.app-container');
+    if (!viewport || !container) return;
+
+    const mode = detectTVMode();
+    root.setAttribute('data-mode', mode);
+
+    if (mode !== 'tv') {
+        // Fora da TV, o contentor volta ao fluxo normal.
+        container.style.transform = '';
+        return;
+    }
+
+    // Medir o contentor depois de o transform ter sido limpo: com o
+    // transform aplicado, o offsetWidth já seria a caixa escalada e o
+    // cálculo entraria em loop.
+    container.style.transform = 'none';
+
+    const boxWidth = container.offsetWidth;
+    const boxHeight = container.offsetHeight;
+    const availableWidth = viewport.clientWidth;
+    const availableHeight = viewport.clientHeight;
+    if (!boxWidth || !boxHeight || !availableWidth || !availableHeight) return;
+
+    // min() e não max(): garante que o conteúdo cabe inteiro, deixando
+    // bandas vazias em vez de cortar o topo e o fundo.
+    const scale = Math.min(availableWidth / boxWidth, availableHeight / boxHeight);
+
+    // Piso para não encolher até ficar ilegível; tecto de 2x para não
+    // esticar uma miniatura no meio de um painel muito grande.
+    const finalScale = Math.min(Math.max(scale, 0.25), 2);
+    container.style.transform = `scale(${finalScale})`;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
+    applyViewportScale();
     initRadio();
     // loadNotificationHistory() refresca os contadores no seu finally, por isso
     // não se chama refreshStats() aqui para não duplicar o pedido no arranque.
     await loadNotificationHistory();
     connectSSE();
     updateMuteBtn();
+
+    // O APK da TV pode redimensionar a janela, e o browser também redimensiona
+    // ao rodar o dispositivo — em ambos os casos o modo e o scale têm de ser
+    // recalculados.
+    window.addEventListener('resize', applyViewportScale);
+    window.addEventListener('orientationchange', applyViewportScale);
 
     // Avalia estado das notificações push e mostra banner se necessário
     evaluatePushState();
