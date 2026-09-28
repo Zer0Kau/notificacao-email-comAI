@@ -903,13 +903,56 @@ async function sendTestNotification(rule = "Teste Manual") {
 }
 
 // ===== Inicialização =====
+/* ============================================================
+   Encaixe na TV (16:9 / 4K) — escala o design sem o alterar
+   ============================================================ */
+
+// Tamanho lógico do painel. Alterar estes dois valores muda a densidade do
+// design: menor = conteúdo maior em relação ao ecrã.
+const APP_BASE_W = 1600;
+const APP_BASE_H = 900;
+
+function applyViewportScale() {
+    const viewport = document.getElementById('appViewport');
+    const container = document.querySelector('.app-container');
+    if (!viewport || !container) return;
+
+    // Medir o contentor depois de o transform ter sido limpo: um
+    // getBoundingClientRect com transform aplicado devolveria já a caixa
+    // escalada e o cálculo entraria em loop.
+    container.style.transform = 'none';
+
+    const boxWidth = container.offsetWidth;
+    const boxHeight = container.offsetHeight;
+    if (!boxWidth || !boxHeight) return;
+
+    const availableWidth = viewport.clientWidth;
+    const availableHeight = viewport.clientHeight;
+    if (!availableWidth || !availableHeight) return;
+
+    // min() e não max(): garante que o conteúdo cabe inteiro, deixando
+    // bandas vazias em vez de cortar o topo e o fundo.
+    const scale = Math.min(availableWidth / boxWidth, availableHeight / boxHeight);
+
+    // Abaixo de 1 o design encolhe; num ecrã gigante deixamos crescer até
+    // 2x para não ficar uma miniatura no meio de um painel 4K.
+    const finalScale = Math.min(Math.max(scale, 0.1), 2);
+    container.style.transform = `scale(${finalScale})`;
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
+    applyViewportScale();
     initRadio();
     // loadNotificationHistory() refresca os contadores no seu finally, por isso
     // não se chama refreshStats() aqui para não duplicar o pedido no arranque.
     await loadNotificationHistory();
     connectSSE();
     updateMuteBtn();
+
+    // O APK da TV pode redimensionar a janela, e o browser também redimensiona
+    // ao rodar o dispositivo — em ambos os casos o scale tem de ser recalculado.
+    window.addEventListener('resize', applyViewportScale);
+    window.addEventListener('orientationchange', applyViewportScale);
 
     // Avalia estado das notificações push e mostra banner se necessário
     evaluatePushState();
