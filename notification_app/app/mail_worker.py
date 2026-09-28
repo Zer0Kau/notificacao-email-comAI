@@ -190,15 +190,10 @@ def _build_filter_rules(
             "sender": re.compile(re.escape(suap_sender), re.IGNORECASE),
             "subject": re.compile(r"(resolvido|resolvida|encerrado|encerrada|fechado|fechada|solucionado)", re.IGNORECASE),
         })
-        rules.append({
-            "name": "SUAP",
-            "sender": re.compile(re.escape(suap_sender), re.IGNORECASE),
-            "subject": re.compile(r"novo\s+chamado", re.IGNORECASE),
-        })
     rules.append({
-        "name": "Monitoramento",
-        "sender": None,
-        "subject": re.compile(r"(monitor|incidente|critical|warning)", re.IGNORECASE),
+        "name": "SUAP",
+        "sender": re.compile(re.escape(suap_sender), re.IGNORECASE),
+        "subject": re.compile(r"novo\s+chamado", re.IGNORECASE),
     })
     return rules
 

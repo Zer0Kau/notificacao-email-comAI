@@ -16,13 +16,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 from sse_starlette.sse import EventSourceResponse
-from sqlalchemy import select, delete, func
+from sqlalchemy import case, select, delete, func
 
 from .database import async_session, init_db
 from .mail_worker import _process_ai_features, imap_idle_worker, warmup_ollama
 from .models import (
     Notification,
     PushSubscription,
+    STATUS_ARCHIVED,
     STATUS_DISCARDED,
     STATUS_OPEN,
     STATUS_RESOLVED,
@@ -269,28 +270,47 @@ async def get_stats(window_days: int = 7):
     # Regra efectiva quando rule_matched é NULL ou vazio
     rule_col = func.coalesce(func.nullif(Notification.rule_matched, ""), "Geral")
 
+    # Regras que não contam como trabalho: Monitoramento (regra genérica
+    # desativada) e SUAP Resolvido/Teste Manual (fechos e testes manuais).
+    IGNORED_RULES = {"monitoramento", "suap resolvido", "teste manual"}
+    rule_kept = func.lower(rule_col).notin_(IGNORED_RULES)
+
     async with async_session() as session:
         open_rows = (
             await session.execute(
-                select(rule_col, func.count(Notification.id))
-                .where(Notification.status == STATUS_OPEN)
+                select(
+                    rule_col,
+                    func.sum(
+                        case((Notification.status == STATUS_OPEN, 1), else_=0)
+                    ),
+                )
+                .where(rule_kept)
                 .group_by(rule_col)
             )
         ).all()
 
         totals = (
             await session.execute(
-                select(Notification.status, func.count(Notification.id)).group_by(
-                    Notification.status
-                )
+                select(Notification.status, func.count(Notification.id)).where(
+                    rule_kept
+                ).group_by(Notification.status)
             )
         ).all()
+
+        archived_total = (
+            await session.execute(
+                select(func.count(Notification.id)).where(
+                    Notification.status == STATUS_ARCHIVED
+                )
+            )
+        ).scalar_one()
 
         resolved_today = (
             await session.execute(
                 select(func.count(Notification.id)).where(
                     Notification.status == STATUS_RESOLVED,
                     Notification.resolved_at >= today_start,
+                    rule_kept,
                 )
             )
         ).scalar_one()
@@ -306,6 +326,7 @@ async def get_stats(window_days: int = 7):
                 .where(
                     Notification.status == STATUS_RESOLVED,
                     Notification.resolved_at >= window_start,
+                    rule_kept,
                 )
                 .group_by(func.date(Notification.resolved_at), rule_col)
             )
@@ -344,6 +365,7 @@ async def get_stats(window_days: int = 7):
         "days_elapsed": days_elapsed,
         "daily_average": round(resolved_7d / max(1, days_elapsed), 1),
         "discarded_total": status_counts.get(STATUS_DISCARDED, 0),
+        "archived_total": int(archived_total or 0),
         "by_day": days,
     }
 

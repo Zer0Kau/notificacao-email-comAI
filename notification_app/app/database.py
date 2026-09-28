@@ -1,6 +1,7 @@
 """Configuração do banco de dados SQLite com SQLAlchemy Async."""
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy import text
@@ -57,6 +58,30 @@ async def _migrate(conn) -> None:
     await conn.execute(
         text("CREATE INDEX IF NOT EXISTS ix_notifications_status ON notifications (status)")
     )
+
+    # ===== Archive do backlog importado =====
+    # Quando APP_ARCHIVE_BACKLOG=true, arquiva UMA vez tudo o que estiver "open"
+    # (histórico importado/migrado) para os contadores começarem do zero. Só corre
+    # se ainda não houver nem arquivadas nem dados posteriores: a guarda
+    # "nenhuma archived" garante que um reinício posterior não arquiva as novas.
+    if os.environ.get("APP_ARCHIVE_BACKLOG", "").strip().lower() in ("1", "true", "yes"):
+        archived = (
+            await conn.execute(
+                text("SELECT COUNT(*) FROM notifications WHERE status = 'archived'")
+            )
+        ).scalar_one()
+        if archived == 0:
+            changed = (
+                await conn.execute(
+                    text(
+                        "UPDATE notifications SET status = 'archived',"
+                        " resolved_at = :now WHERE status = 'open'"
+                    ),
+                    {"now": datetime.utcnow()},
+                )
+            ).rowcount
+            if changed:
+                print(f"[MIGRATE] Arquivadas {changed} notificações do backlog.")
 
 
 async def get_session() -> AsyncSession:

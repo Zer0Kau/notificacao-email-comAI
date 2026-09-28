@@ -11,10 +11,12 @@ from .database import Base
 #   open       -> por tratar (estado inicial e valor por omissão)
 #   resolved   -> concluída pelo operador (conta como trabalho executado)
 #   discarded  -> dispensada, não é trabalho real (spam, duplicado, irrelevante)
-NOTIFICATION_STATUSES = ("open", "resolved", "discarded")
+#   archived   -> histórico importado/migrado; não conta em nenhum contador
+NOTIFICATION_STATUSES = ("open", "resolved", "discarded", "archived")
 STATUS_OPEN = "open"
 STATUS_RESOLVED = "resolved"
 STATUS_DISCARDED = "discarded"
+STATUS_ARCHIVED = "archived"
 
 
 class Notification(Base):

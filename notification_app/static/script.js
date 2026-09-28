@@ -820,7 +820,6 @@ function renderCompletionReport() {
     // quebra por categoria.
     const dayRows = stats.by_day.map((day) => {
         const categoryText = Object.entries(day.by_rule)
-            .filter(([rule]) => rule.toLowerCase() !== "monitoramento")
             .map(([rule, count]) => `${rule}: ${count}`)
             .join(" · ");
         return `<div class="flex items-start justify-between gap-2 text-[10px] text-slate-400"><span>${escapeHtml(getDayLabel(day.day))}</span><span class="text-right text-slate-500">${day.total} concluída(s)${categoryText ? `<br>${escapeHtml(categoryText)}` : ""}</span></div>`;
